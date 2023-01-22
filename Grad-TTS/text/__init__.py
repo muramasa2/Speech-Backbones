@@ -1,13 +1,13 @@
 """ from https://github.com/keithito/tacotron """
 
 import re
-from text import cleaners
-from text.symbols import symbols
-from espnet2.text.token_id_converter import TokenIDConverter
-from espnet2.text.phoneme_tokenizer import PhonemeTokenizer
+
 import numpy as np
 from espnet2.text.cleaner import TextCleaner
-
+from espnet2.text.phoneme_tokenizer import PhonemeTokenizer
+from espnet2.text.token_id_converter import TokenIDConverter
+from text import cleaners
+from text.symbols import symbols
 
 _symbol_to_id = {s: i for i, s in enumerate(symbols)}
 _id_to_symbol = {i: s for i, s in enumerate(symbols)}

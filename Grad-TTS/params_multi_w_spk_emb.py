@@ -9,29 +9,30 @@
 from model.utils import fix_len_compatibility
 
 # data parameters
-# train_filelist_path = "resources/filelists/jsut/train.txt"
-# valid_filelist_path = "resources/filelists/jsut/valid.txt"
-# test_filelist_path = "resources/filelists/jsut/test.txt"
-# token_list_path = "resources/filelists/jsut/tokens.txt"
+train_filelist_path = "resources/filelists/vctk/train.txt"
+valid_filelist_path = "resources/filelists/vctk/valid.txt"
+test_filelist_path = "resources/filelists/vctk/test.txt"
 
 # train_filelist_path = "resources/filelists/jvs/train.txt"
 # valid_filelist_path = "resources/filelists/jvs/valid.txt"
 # test_filelist_path = "resources/filelists/jvs/test.txt"
 # token_list_path = "resources/filelists/jvs/tokens.txt"
 
-train_filelist_path = "resources/filelists/takiyama/train.txt"
-valid_filelist_path = "resources/filelists/takiyama/test.txt"
-test_filelist_path = "resources/filelists/takiyama/test.txt"
-token_list_path = "resources/filelists/takiyama/tokens.txt"
-
+# train_filelist_path = "resources/filelists/takiyama/train.txt"
+# valid_filelist_path = "resources/filelists/takiyama/test.txt"
+# test_filelist_path = "resources/filelists/takiyama/test.txt"
+# token_list_path = "resources/filelists/takiyama/tokens.txt"
 # train_filelist_path = "resources/filelists/ljspeech/train.txt"
 # valid_filelist_path = "resources/filelists/ljspeech/valid.txt"
 # test_filelist_path = "resources/filelists/ljspeech/test.txt"
 cmudict_path = "resources/cmu_dictionary"
 add_blank = True
 n_feats = 80
-n_spks = 1  # 247 for Libri-TTS filelist and 1 for LJSpeech
-spk_emb_dim = 64
+n_spks = 97  # 247 for Libri-TTS filelist and 1 for LJSpeech
+# n_spks = 377  # 247 for Libri-TTS filelist and 1 for LJSpeech
+n_spks = 110  # 247 for Libri-TTS filelist and 1 for LJSpeech
+
+spk_emb_dim = 512
 n_feats = 80
 n_fft = 1024
 sample_rate = 22050
@@ -39,6 +40,13 @@ hop_length = 256
 win_length = 1024
 f_min = 0
 f_max = 8000
+
+# speaker encoder parameters
+spk_enc_model_path = "/data/TTS/weight/SE_checkpoint.pth.tar"
+spk_enc_model_config_path = "/data/TTS/weight/config_se.json"
+train_wav_to_spk_emb_path = "/data/TTS/TTS/bin/train_wav_to_spk_emb.pth"
+valid_wav_to_spk_emb_path = "/data/TTS/TTS/bin/valid_wav_to_spk_emb.pth"
+
 
 # encoder parameters
 n_enc_channels = 192
@@ -57,13 +65,13 @@ beta_max = 20.0
 pe_scale = 1  # 1 for `grad-tts-old.pt` checkpoint
 
 # training parameters
-# log_dir = "logs/jsut_exp"
+log_dir = "logs/vctk_w_spk_emb_exp"
 # log_dir = "logs/jvs_exp"
-log_dir = "logs/takiyama_exp"
+# log_dir = "logs/takiyama_exp"
 
 test_size = 4
 n_epochs = 10000
-batch_size = 100
+batch_size = 180
 learning_rate = 1e-4
 seed = 37
 save_every = 0

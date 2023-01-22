@@ -1,14 +1,7 @@
-# Copyright (C) 2021. Huawei Technologies Co., Ltd. All rights reserved.
-# This program is free software; you can redistribute it and/or modify
-# it under the terms of the MIT License.
-# This program is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-# MIT License for more details.
-
 import argparse
 import datetime as dt
 import json
+import os
 import sys
 
 import numpy as np
@@ -16,7 +9,7 @@ import params
 import torch
 from model import GradTTS
 from scipy.io.wavfile import write
-from text import cmudict, text_to_sequence
+from text import cmudict, ja_text_to_sequence, text_to_sequence
 from text.symbols import symbols
 from utils import intersperse
 
@@ -24,8 +17,8 @@ sys.path.append("./hifi-gan/")
 from env import AttrDict
 from models import Generator as HiFiGAN
 
-HIFIGAN_CONFIG = "./checkpts/hifigan-config.json"
-HIFIGAN_CHECKPT = "./checkpts/hifigan.pt"
+HIFIGAN_CONFIG = "./checkpts/UNIVERSAL_V1/config.json"
+HIFIGAN_CHECKPT = "./checkpts/UNIVERSAL_V1/hifigan.pt"
 
 
 if __name__ == "__main__":
@@ -59,6 +52,14 @@ if __name__ == "__main__":
         required=False,
         default=None,
         help="speaker id for multispeaker model",
+    )
+    parser.add_argument(
+        "-o",
+        "--output_dir",
+        type=str,
+        required=False,
+        default="out_jsut",
+        help="output dir",
     )
     args = parser.parse_args()
 
@@ -108,12 +109,16 @@ if __name__ == "__main__":
     with open(args.file, "r", encoding="utf-8") as f:
         texts = [line.strip() for line in f.readlines()]
     cmu = cmudict.CMUDict("./resources/cmu_dictionary")
+    token_list_path = (
+        "/data/Speech-Backbones/Grad-TTS/resources/filelists/jsut/tokens.txt"
+    )
 
     with torch.no_grad():
         for i, text in enumerate(texts):
             print(f"Synthesizing {i} text...", end=" ")
             x = torch.LongTensor(
-                intersperse(text_to_sequence(text, dictionary=cmu), len(symbols))
+                ja_text_to_sequence(text, transcript_token_list=token_list_path)
+                # intersperse(text_to_sequence(text, dictionary=cmu), len(symbols))
             ).cuda()[None]
             x_lengths = torch.LongTensor([x.shape[-1]]).cuda()
 
@@ -133,7 +138,7 @@ if __name__ == "__main__":
             audio = (
                 vocoder.forward(y_dec).cpu().squeeze().clamp(-1, 1).numpy() * 32768
             ).astype(np.int16)
-
-            write(f"./out/sample_{i}.wav", 22050, audio)
+            os.makedirs(args.output_dir, exist_ok=True)
+            write(f"{args.output_dir}/sample_{i}.wav", 22050, audio)
 
     print("Done. Check out `out` folder for samples.")

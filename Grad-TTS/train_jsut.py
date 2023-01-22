@@ -16,7 +16,7 @@ from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
 from utils import plot_tensor, save_plot
 
-from data import TextMelBatchCollate, TextMelDataset
+from data import TextMelBatchCollate, TextMelJSUTDataset
 
 train_filelist_path = params.train_filelist_path
 valid_filelist_path = params.valid_filelist_path
@@ -52,6 +52,104 @@ dec_dim = params.dec_dim
 beta_min = params.beta_min
 beta_max = params.beta_max
 pe_scale = params.pe_scale
+token_list_path = params.token_list_path
+
+
+def train_one_epoch(iteration, epoch, model, loader, train_dataset, batch_size):
+    model.train()
+
+    dur_losses = []
+    prior_losses = []
+    diff_losses = []
+    with tqdm(loader, total=len(train_dataset) // batch_size) as progress_bar:
+        for batch_idx, batch in enumerate(progress_bar):
+            model.zero_grad()
+            x, x_lengths = batch["x"].cuda(), batch["x_lengths"].cuda()
+            y, y_lengths = batch["y"].cuda(), batch["y_lengths"].cuda()
+            dur_loss, prior_loss, diff_loss = model.compute_loss(
+                x, x_lengths, y, y_lengths, out_size=out_size
+            )
+            loss = sum([dur_loss, prior_loss, diff_loss])
+            loss.backward()
+            optimizer.step()
+
+            dur_losses.append(dur_loss.item())
+            prior_losses.append(prior_loss.item())
+            diff_losses.append(diff_loss.item())
+
+            if batch_idx % 5 == 0:
+                msg = f"Epoch: {epoch}, iteration: {iteration} | dur_loss: {dur_loss.item()}, prior_loss: {prior_loss.item()}, diff_loss: {diff_loss.item()}"
+                progress_bar.set_description(msg)
+
+            iteration += 1
+
+    log_msg = "Epoch %d: duration loss = %.3f " % (epoch, np.mean(dur_losses))
+    log_msg += "| prior loss = %.3f " % np.mean(prior_losses)
+    log_msg += "| diffusion loss = %.3f\n" % np.mean(diff_losses)
+
+    logger.add_scalars(
+        "duration_loss", {"train": np.mean(dur_losses)}, global_step=epoch
+    )
+    logger.add_scalars(
+        "prior_loss", {"train": np.mean(prior_losses)}, global_step=epoch
+    )
+    logger.add_scalars(
+        "diffusion_loss",
+        {"train": np.mean(diff_losses)},
+        global_step=epoch,
+    )
+
+    with open(f"{log_dir}/train.log", "a") as f:
+        f.write(log_msg)
+
+
+def validate(iteration, epoch, model, loader, test_dataset, batch_size):
+    model.eval()
+
+    losses = []
+    dur_losses = []
+    prior_losses = []
+    diff_losses = []
+    with torch.no_grad():
+        with tqdm(loader, total=len(test_dataset) // batch_size) as progress_bar:
+            for batch in progress_bar:
+                model.zero_grad()
+                x, x_lengths = batch["x"].cuda(), batch["x_lengths"].cuda()
+                y, y_lengths = batch["y"].cuda(), batch["y_lengths"].cuda()
+                dur_loss, prior_loss, diff_loss = model.compute_loss(
+                    x, x_lengths, y, y_lengths, out_size=out_size
+                )
+                loss = sum([dur_loss, prior_loss, diff_loss])
+
+                losses.append(loss.item())
+                dur_losses.append(dur_loss.item())
+                prior_losses.append(prior_loss.item())
+                diff_losses.append(diff_loss.item())
+
+                iteration += 1
+
+        log_msg = "[Eval] Epoch %d: duration loss = %.3f " % (
+            epoch,
+            np.mean(dur_losses),
+        )
+        log_msg += "| prior loss = %.3f " % np.mean(prior_losses)
+        log_msg += "| diffusion loss = %.3f\n" % np.mean(diff_losses)
+
+        logger.add_scalars(
+            "duration_loss", {"val": np.mean(dur_losses)}, global_step=epoch
+        )
+        logger.add_scalars(
+            "prior_loss", {"val": np.mean(prior_losses)}, global_step=epoch
+        )
+        logger.add_scalars(
+            "diffusion_loss",
+            {"val": np.mean(diff_losses)},
+            global_step=epoch,
+        )
+        with open(f"{log_dir}/train.log", "a") as f:
+            f.write(log_msg)
+
+        return np.mean(losses)
 
 
 if __name__ == "__main__":
@@ -62,9 +160,9 @@ if __name__ == "__main__":
     logger = SummaryWriter(log_dir=log_dir)
 
     print("Initializing data loaders...")
-    train_dataset = TextMelDataset(
+    train_dataset = TextMelJSUTDataset(
         train_filelist_path,
-        cmudict_path,
+        token_list_path,
         add_blank,
         n_fft,
         n_feats,
@@ -75,7 +173,7 @@ if __name__ == "__main__":
         f_max,
     )
     batch_collate = TextMelBatchCollate()
-    loader = DataLoader(
+    train_loader = DataLoader(
         dataset=train_dataset,
         batch_size=batch_size,
         collate_fn=batch_collate,
@@ -83,9 +181,9 @@ if __name__ == "__main__":
         num_workers=4,
         shuffle=False,
     )
-    test_dataset = TextMelDataset(
+    test_dataset = TextMelJSUTDataset(
         valid_filelist_path,
-        cmudict_path,
+        token_list_path,
         add_blank,
         n_fft,
         n_feats,
@@ -95,7 +193,14 @@ if __name__ == "__main__":
         f_min,
         f_max,
     )
-
+    test_loader = DataLoader(
+        dataset=test_dataset,
+        batch_size=batch_size,
+        collate_fn=batch_collate,
+        drop_last=True,
+        num_workers=4,
+        shuffle=False,
+    )
     print("Initializing model...")
     model = GradTTS(
         nsymbols,
@@ -139,68 +244,20 @@ if __name__ == "__main__":
 
     print("Start training...")
     iteration = 0
+    best_val_loss = None
     for epoch in range(1, n_epochs + 1):
-        model.train()
-        dur_losses = []
-        prior_losses = []
-        diff_losses = []
-        with tqdm(loader, total=len(train_dataset) // batch_size) as progress_bar:
-            for batch_idx, batch in enumerate(progress_bar):
-                model.zero_grad()
-                x, x_lengths = batch["x"].cuda(), batch["x_lengths"].cuda()
-                y, y_lengths = batch["y"].cuda(), batch["y_lengths"].cuda()
-                dur_loss, prior_loss, diff_loss = model.compute_loss(
-                    x, x_lengths, y, y_lengths, out_size=out_size
-                )
-                loss = sum([dur_loss, prior_loss, diff_loss])
-                loss.backward()
+        train_one_epoch(
+            iteration, epoch, model, train_loader, train_dataset, batch_size
+        )
+        val_loss = validate(
+            iteration, epoch, model, test_loader, test_dataset, batch_size
+        )
 
-                enc_grad_norm = torch.nn.utils.clip_grad_norm_(
-                    model.encoder.parameters(), max_norm=1
-                )
-                dec_grad_norm = torch.nn.utils.clip_grad_norm_(
-                    model.decoder.parameters(), max_norm=1
-                )
-                optimizer.step()
+        if best_val_loss is None:
+            best_val_loss = val_loss
 
-                logger.add_scalar(
-                    "training/duration_loss", dur_loss.item(), global_step=iteration
-                )
-                logger.add_scalar(
-                    "training/prior_loss", prior_loss.item(), global_step=iteration
-                )
-                logger.add_scalar(
-                    "training/diffusion_loss", diff_loss.item(), global_step=iteration
-                )
-                logger.add_scalar(
-                    "training/encoder_grad_norm", enc_grad_norm, global_step=iteration
-                )
-                logger.add_scalar(
-                    "training/decoder_grad_norm", dec_grad_norm, global_step=iteration
-                )
-
-                dur_losses.append(dur_loss.item())
-                prior_losses.append(prior_loss.item())
-                diff_losses.append(diff_loss.item())
-
-                if batch_idx % 5 == 0:
-                    msg = f"Epoch: {epoch}, iteration: {iteration} | dur_loss: {dur_loss.item()}, prior_loss: {prior_loss.item()}, diff_loss: {diff_loss.item()}"
-                    progress_bar.set_description(msg)
-
-                iteration += 1
-
-        log_msg = "Epoch %d: duration loss = %.3f " % (epoch, np.mean(dur_losses))
-        log_msg += "| prior loss = %.3f " % np.mean(prior_losses)
-        log_msg += "| diffusion loss = %.3f\n" % np.mean(diff_losses)
-        with open(f"{log_dir}/train.log", "a") as f:
-            f.write(log_msg)
-
-        if epoch % params.save_every > 0:
-            continue
-
-        model.eval()
-        print("Synthesis...")
-        with torch.no_grad():
+        elif best_val_loss > val_loss:
+            print("Synthesis...")
             for i, item in enumerate(test_batch):
                 x = item["x"].to(torch.long).unsqueeze(0).cuda()
                 x_lengths = torch.LongTensor([x.shape[-1]]).cuda()
@@ -208,24 +265,26 @@ if __name__ == "__main__":
                 logger.add_image(
                     f"image_{i}/generated_enc",
                     plot_tensor(y_enc.squeeze().cpu()),
-                    global_step=iteration,
+                    global_step=epoch,
                     dataformats="HWC",
                 )
                 logger.add_image(
                     f"image_{i}/generated_dec",
                     plot_tensor(y_dec.squeeze().cpu()),
-                    global_step=iteration,
+                    global_step=epoch,
                     dataformats="HWC",
                 )
                 logger.add_image(
                     f"image_{i}/alignment",
                     plot_tensor(attn.squeeze().cpu()),
-                    global_step=iteration,
+                    global_step=epoch,
                     dataformats="HWC",
                 )
                 save_plot(y_enc.squeeze().cpu(), f"{log_dir}/generated_enc_{i}.png")
                 save_plot(y_dec.squeeze().cpu(), f"{log_dir}/generated_dec_{i}.png")
                 save_plot(attn.squeeze().cpu(), f"{log_dir}/alignment_{i}.png")
 
-        ckpt = model.state_dict()
-        torch.save(ckpt, f=f"{log_dir}/grad_{epoch}.pt")
+            print("Save weight...")
+            ckpt = model.state_dict()
+            torch.save(ckpt, f=f"{log_dir}/grad_{epoch}.pt")
+            best_val_loss = val_loss

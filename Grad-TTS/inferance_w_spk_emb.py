@@ -9,23 +9,48 @@
 import argparse
 import datetime as dt
 import json
+import os
 import sys
+import tempfile
 
 import numpy as np
-import params
+
+# import params
+import params_multi_w_spk_emb as params
 import torch
+import torchaudio as ta
 from model import GradTTS
 from scipy.io.wavfile import write
 from text import cmudict, text_to_sequence
 from text.symbols import symbols
 from utils import intersperse
 
+from TTS.tts.utils.speakers import SpeakerManager
+
 sys.path.append("./hifi-gan/")
 from env import AttrDict
 from models import Generator as HiFiGAN
 
-HIFIGAN_CONFIG = "./checkpts/hifigan-config.json"
-HIFIGAN_CHECKPT = "./checkpts/hifigan.pt"
+# HIFIGAN_CONFIG = "./checkpts/hifigan-config.json"
+# HIFIGAN_CHECKPT = "./checkpts/hifigan.pt"
+
+HIFIGAN_CONFIG = "./checkpts/UNIVERSAL_V1/config.json"
+HIFIGAN_CHECKPT = "./checkpts/UNIVERSAL_V1/hifigan.pt"
+
+
+def get_spk_emb(enc_manager, filepath):
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmpfile = os.path.join(tmpdir, "temp.wav")
+        audio, sr = ta.load(filepath)
+        audio = ta.functional.resample(audio, orig_freq=sr, new_freq=16000)
+        ta.save(tmpfile, audio, 16000, encoding="PCM_S", bits_per_sample=16)
+        spk_emb = (
+            torch.tensor(enc_manager.compute_embedding_from_clip(tmpfile))
+            .to(torch.float32)
+            .unsqueeze(0)
+            .cuda()
+        )
+    return spk_emb
 
 
 if __name__ == "__main__":
@@ -53,23 +78,22 @@ if __name__ == "__main__":
         help="number of timesteps of reverse diffusion",
     )
     parser.add_argument(
-        "-s",
-        "--speaker_id",
-        type=int,
+        "-r",
+        "--ref_wav",
+        type=str,
         required=False,
         default=None,
         help="speaker id for multispeaker model",
     )
     args = parser.parse_args()
 
-    if not isinstance(args.speaker_id, type(None)):
-        assert (
-            params.n_spks > 1
-        ), "Ensure you set right number of speakers in `params.py`."
-        spk = torch.LongTensor([args.speaker_id]).cuda()
-    else:
-        spk = None
+    enc_manager = SpeakerManager(
+        encoder_model_path=params.spk_enc_model_path,
+        encoder_config_path=params.spk_enc_model_config_path,
+        use_cuda=True,
+    )
 
+    spk = get_spk_emb(enc_manager, filepath=args.ref_wav)
     print("Initializing Grad-TTS...")
     generator = GradTTS(
         len(symbols) + 1,
